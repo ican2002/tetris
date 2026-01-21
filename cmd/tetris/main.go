@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -20,6 +22,10 @@ var (
 
 func main() {
 	flag.Parse()
+
+	// Set up signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// Create TUI
 	ui, err := tui.New()
@@ -134,13 +140,22 @@ func main() {
 			}
 
 			// Handle keyboard input
-			handleKeyEvent(ev, client)
+			if handleKeyEvent(ev, client) {
+				ui.SetRunning(false)
+			}
 
 		case *tcell.EventResize:
 			ui.UpdateSize()
 			if !ui.CheckMinimumSize() {
 				message = "Terminal too small (min 80x24)"
 			}
+		}
+
+		// Check for signals
+		select {
+		case <-sigChan:
+			ui.SetRunning(false)
+		default:
 		}
 	}
 }
@@ -159,7 +174,7 @@ func showWelcome(ui *tui.TUI) {
 	}
 }
 
-func handleKeyEvent(ev *tcell.EventKey, client *wsclient.Client) {
+func handleKeyEvent(ev *tcell.EventKey, client *wsclient.Client) bool {
 	var cmdType protocol.MessageType
 
 	switch ev.Key() {
@@ -172,11 +187,11 @@ func handleKeyEvent(ev *tcell.EventKey, client *wsclient.Client) {
 	case tcell.KeyUp:
 		cmdType = protocol.MessageTypeRotate
 	case tcell.KeyEscape:
-		ui, _ := tui.New()
-		ui.SetRunning(false)
-		os.Exit(0)
+		return true // Signal to quit
 	case tcell.KeyEnter:
 		cmdType = protocol.MessageTypeHardDrop
+	case tcell.KeyCtrlC:
+		return true // Signal to quit
 	default:
 		switch ev.Rune() {
 		case ' ', 'x', 'X':
@@ -186,11 +201,9 @@ func handleKeyEvent(ev *tcell.EventKey, client *wsclient.Client) {
 		case 'r', 'R':
 			cmdType = protocol.MessageTypeResume
 		case 'q', 'Q':
-			ui, _ := tui.New()
-			ui.SetRunning(false)
-			os.Exit(0)
+			return true // Signal to quit
 		default:
-			return
+			return false
 		}
 	}
 
@@ -199,11 +212,13 @@ func handleKeyEvent(ev *tcell.EventKey, client *wsclient.Client) {
 		data, err := json.Marshal(cmd)
 		if err != nil {
 			log.Printf("Failed to marshal command: %v", err)
-			return
+			return false
 		}
 
 		if err := client.Send(data); err != nil {
 			log.Printf("Failed to send command: %v", err)
 		}
 	}
+
+	return false
 }
