@@ -210,7 +210,8 @@ func (c *Client) readPump() {
 
 // writePump handles writing messages to the WebSocket connection
 func (c *Client) writePump() {
-	ticker := time.NewTicker(time.Second)
+	// Update game state every 100ms for smooth gameplay
+	ticker := time.NewTicker(100 * time.Millisecond)
 	defer func() {
 		ticker.Stop()
 		c.conn.Close()

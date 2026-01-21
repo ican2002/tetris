@@ -10,12 +10,6 @@ import (
 
 // DrawBoard draws the Tetris board
 func (t *TUI) DrawBoard(x, y int, state *protocol.StateMessage, style tcell.Style) {
-	boardWidth := 22  // 10 cells * 2 + borders
-	boardHeight := 22 // 20 cells + borders
-
-	// Draw board border
-	t.DrawBox(x, y, boardWidth, boardHeight, "Tetris", style)
-
 	// Create a display board that includes locked pieces and current piece
 	displayBoard := make([][]string, 20)
 	for row := 0; row < 20; row++ {
@@ -51,8 +45,8 @@ func (t *TUI) DrawBoard(x, y int, state *protocol.StateMessage, style tcell.Styl
 	// Draw cells
 	for row := 0; row < 20; row++ {
 		for col := 0; col < 10; col++ {
-			cellX := x + 1 + col*2
-			cellY := y + 1 + row
+			cellX := x + col*2
+			cellY := y + row
 
 			colorStr := displayBoard[row][col]
 			if colorStr != "" {
@@ -72,27 +66,21 @@ func (t *TUI) DrawBoard(x, y int, state *protocol.StateMessage, style tcell.Styl
 
 // DrawInfoPanel draws the information panel
 func (t *TUI) DrawInfoPanel(x, y int, state *protocol.StateMessage, style tcell.Style) {
-	panelWidth := 25
-	panelHeight := 22
-
-	// Draw panel border
-	t.DrawBox(x, y, panelWidth, panelHeight, "Info", style)
-
 	// Draw information
-	line := y + 2
-	t.DrawText(x+2, line, "Score:", style.Bold(true))
-	t.DrawText(x+2, line+1, fmt.Sprintf("%d", state.Score), style)
+	line := y + 1
+	t.DrawText(x, line, "Score:", style.Bold(true))
+	t.DrawText(x, line+1, fmt.Sprintf("%d", state.Score), style)
 
-	line += 4
-	t.DrawText(x+2, line, "Level:", style.Bold(true))
-	t.DrawText(x+2, line+1, fmt.Sprintf("%d", state.Level), style)
+	line += 3
+	t.DrawText(x, line, "Level:", style.Bold(true))
+	t.DrawText(x, line+1, fmt.Sprintf("%d", state.Level), style)
 
-	line += 4
-	t.DrawText(x+2, line, "Lines:", style.Bold(true))
-	t.DrawText(x+2, line+1, fmt.Sprintf("%d", state.Lines), style)
+	line += 3
+	t.DrawText(x, line, "Lines:", style.Bold(true))
+	t.DrawText(x, line+1, fmt.Sprintf("%d", state.Lines), style)
 
-	line += 4
-	t.DrawText(x+2, line, "State:", style.Bold(true))
+	line += 3
+	t.DrawText(x, line, "State:", style.Bold(true))
 	stateStyle := style
 	switch state.State {
 	case "playing":
@@ -102,12 +90,12 @@ func (t *TUI) DrawInfoPanel(x, y int, state *protocol.StateMessage, style tcell.
 	case "gameover":
 		stateStyle = stateStyle.Foreground(tcell.ColorRed.TrueColor())
 	}
-	t.DrawText(x+2, line+1, capitalize(state.State), stateStyle)
+	t.DrawText(x, line+1, capitalize(state.State), stateStyle)
 
 	// Draw next piece preview
-	line += 4
-	t.DrawText(x+2, line, "Next:", style.Bold(true))
-	t.DrawPiecePreview(x+6, line+1, state.NextPiece, style)
+	line += 3
+	t.DrawText(x, line, "Next:", style.Bold(true))
+	t.DrawPiecePreview(x, line+1, state.NextPiece, style)
 }
 
 // DrawPiecePreview draws a piece preview (4x4 grid)

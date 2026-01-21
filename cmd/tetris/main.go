@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -162,38 +163,11 @@ func main() {
 
 	// Main loop
 	style := tcell.StyleDefault
-	refreshTicker := time.NewTicker(50 * time.Millisecond) // 20 FPS refresh rate
-	defer refreshTicker.Stop()
 
 	for ui.IsRunning() {
-		// Draw current state
-		ui.Clear()
+		// Handle events first (with short timeout for responsive input)
+		ev := ui.PollEventWithTimeout(50 * time.Millisecond)
 
-		if currentState == nil && !gameOver {
-			// Show welcome screen
-			ui.DrawWelcomeScreen(style)
-		} else if gameOver {
-			// Show game over screen
-			if currentState != nil {
-				ui.DrawGameOverScreen(currentState, style)
-			}
-		} else if currentState != nil {
-			// Draw game (use rows 1-20 for game)
-			ui.DrawBoard(2, 1, currentState, style)
-			ui.DrawInfoPanel(26, 1, currentState, style)
-		}
-
-		// Draw status bar (row 21)
-		ui.DrawStatusBar(0, 21, 80, statusMsg, client.IsConnected(), style)
-
-		// Draw log window (rows 22-29, 8 rows for logs)
-		drawLogWindow(ui, 0, 22, 80, 8, logBuffer, style)
-
-		// Update screen
-		ui.Sync()
-
-		// Handle events with timeout
-		ev := ui.PollEventWithTimeout(100 * time.Millisecond)
 		if ev != nil {
 			switch ev := ev.(type) {
 			case *tcell.EventKey:
@@ -212,9 +186,10 @@ func main() {
 					continue
 				}
 
-				// Handle keyboard input
+				// Handle keyboard input immediately
 				if handleKeyEvent(ev, client, logBuffer) {
 					ui.SetRunning(false)
+					continue
 				}
 
 			case *tcell.EventResize:
@@ -224,6 +199,37 @@ func main() {
 				}
 			}
 		}
+
+		// Then draw current state
+		ui.Clear()
+
+		if currentState == nil && !gameOver {
+			// Show welcome screen
+			ui.DrawWelcomeScreen(style)
+		} else if gameOver {
+			// Show game over screen
+			if currentState != nil {
+				ui.DrawGameOverScreen(currentState, style)
+			}
+		} else if currentState != nil {
+			// Draw game (use rows 1-20 for game)
+			// Draw a box around the entire game area
+			ui.DrawBox(1, 0, 78, 22, "", style)
+			ui.DrawBoard(2, 1, currentState, style)
+			ui.DrawInfoPanel(26, 1, currentState, style)
+		}
+
+		// Draw status bar (row 22)
+		ui.DrawStatusBar(0, 22, 80, statusMsg, client.IsConnected(), style)
+
+		// Draw separator line
+		ui.DrawText(0, 23, strings.Repeat("─", 80), style.Dim(true))
+
+		// Draw log window (rows 24-29, 6 rows for logs)
+		drawLogWindow(ui, 0, 24, 80, 6, logBuffer, style)
+
+		// Update screen
+		ui.Sync()
 
 		// Check for signals
 		select {
