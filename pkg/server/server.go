@@ -142,6 +142,8 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		server:   s,
 		game:     game.New(),
 		lastPong: time.Now(),
+		pingTimer: time.NewTimer(s.PingInterval),
+		timeoutTimer: time.NewTimer(s.PongTimeout),
 	}
 
 	// Register client
@@ -311,6 +313,12 @@ func (c *Client) updateGame() {
 
 // sendState sends the current game state to the client
 func (c *Client) sendState() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Recovered in sendState: %v", r)
+		}
+	}()
+
 	msg := protocol.NewStateMessage(c.game)
 	data, err := msg.Serialize()
 	if err != nil {
@@ -321,12 +329,18 @@ func (c *Client) sendState() {
 	select {
 	case c.send <- data:
 	default:
-		log.Printf("Client %s send buffer full", c.id)
+		// Channel full or closed, skip this message
 	}
 }
 
 // sendError sends an error message to the client
 func (c *Client) sendError(errMsg string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Recovered in sendError: %v", r)
+		}
+	}()
+
 	msg := protocol.NewErrorMessage(errMsg, 400)
 	data, err := msg.Serialize()
 	if err != nil {
@@ -334,11 +348,21 @@ func (c *Client) sendError(errMsg string) {
 		return
 	}
 
-	c.send <- data
+	select {
+	case c.send <- data:
+	default:
+		// Channel full or closed, skip this message
+	}
 }
 
 // sendPing sends a ping message to the client
 func (c *Client) sendPing() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Recovered in sendPing: %v", r)
+		}
+	}()
+
 	msg := protocol.NewPingMessage(time.Now().Unix())
 	data, err := msg.Serialize()
 	if err != nil {
@@ -346,11 +370,21 @@ func (c *Client) sendPing() {
 		return
 	}
 
-	c.send <- data
+	select {
+	case c.send <- data:
+	default:
+		// Channel full or closed, skip this message
+	}
 }
 
 // sendGameOver sends a game over message to the client
 func (c *Client) sendGameOver() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Recovered in sendGameOver: %v", r)
+		}
+	}()
+
 	msg := protocol.NewGameOverMessage(c.game)
 	data, err := msg.Serialize()
 	if err != nil {
@@ -358,14 +392,15 @@ func (c *Client) sendGameOver() {
 		return
 	}
 
-	c.send <- data
+	select {
+	case c.send <- data:
+	default:
+		// Channel full or closed, skip this message
+	}
 }
 
 // heartbeat manages ping/pong heartbeat
 func (c *Client) heartbeat() {
-	c.pingTimer = time.NewTimer(c.server.PingInterval)
-	c.timeoutTimer = time.NewTimer(c.server.PongTimeout)
-
 	for {
 		select {
 		case <-c.pingTimer.C:
