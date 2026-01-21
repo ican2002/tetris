@@ -231,8 +231,9 @@ func (t *TUI) DrawGameOverScreen(state *protocol.StateMessage, style tcell.Style
 	}
 }
 
-// getPieceShape returns the shape for a piece type
+// getPieceShape returns the rotated shape for a piece
 func getPieceShape(pieceData protocol.PieceData) [][]int {
+	// Get base shape
 	shapes := map[piece.Type][][]int{
 		piece.TypeI: {{1, 1, 1, 1}},
 		piece.TypeO: {{1, 1}, {1, 1}},
@@ -243,7 +244,41 @@ func getPieceShape(pieceData protocol.PieceData) [][]int {
 		piece.TypeL: {{0, 0, 1}, {1, 1, 1}},
 	}
 
-	return shapes[pieceData.Type]
+	baseShape := shapes[pieceData.Type]
+	if baseShape == nil {
+		return nil
+	}
+
+	// Apply rotation
+	return rotateShape(baseShape, pieceData.Rotation)
+}
+
+// rotateShape rotates a shape by the given number of 90° clockwise rotations
+func rotateShape(shape [][]int, rotation int) [][]int {
+	result := shape
+	for i := 0; i < rotation; i++ {
+		result = rotate90(result)
+	}
+	return result
+}
+
+// rotate90 rotates a shape 90° clockwise
+func rotate90(shape [][]int) [][]int {
+	rows := len(shape)
+	cols := len(shape[0])
+	rotated := make([][]int, cols)
+
+	for i := range rotated {
+		rotated[i] = make([]int, rows)
+	}
+
+	for r := 0; r < rows; r++ {
+		for c := 0; c < cols; c++ {
+			rotated[c][rows-1-r] = shape[r][c]
+		}
+	}
+
+	return rotated
 }
 
 // capitalize capitalizes the first letter of a string
