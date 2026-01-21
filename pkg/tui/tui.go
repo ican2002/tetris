@@ -8,6 +8,26 @@ import (
 	"github.com/ican2002/tetris/pkg/piece"
 )
 
+// TUI is the main UI struct
+type TUI struct {
+	screen   tcell.Screen
+	width    int
+	height   int
+	eventCh  chan tcell.Event
+	quitCh   chan struct{}
+
+	// Layout
+	boardX      int
+	boardY      int
+	boardWidth  int
+	boardHeight int
+	infoX       int
+	infoY       int
+
+	// State
+	running bool
+}
+
 // Color mapping from hex colors to tcell colors
 var colorMap = map[piece.Color]tcell.Color{
 	piece.ColorCyan:   tcell.ColorTeal,
@@ -22,22 +42,6 @@ var colorMap = map[piece.Color]tcell.Color{
 
 // Color is a type alias for protocol color
 type Color = piece.Color
-type TUI struct {
-	screen tcell.Screen
-	width  int
-	height int
-
-	// Layout
-	boardX      int
-	boardY      int
-	boardWidth  int
-	boardHeight int
-	infoX       int
-	infoY       int
-
-	// State
-	running bool
-}
 
 // New creates a new TUI instance
 func New() (*TUI, error) {
@@ -51,9 +55,11 @@ func New() (*TUI, error) {
 	}
 
 	t := &TUI{
-		screen: screen,
-		width:  80,
-		height: 24,
+		screen:  screen,
+		width:   80,
+		height:  24,
+		eventCh: make(chan tcell.Event, 10),
+		quitCh:  make(chan struct{}),
 	}
 
 	// Set default styles
@@ -66,7 +72,23 @@ func New() (*TUI, error) {
 	// Get terminal size
 	t.UpdateSize()
 
+	// Start event pump
+	go t.eventPump()
+
 	return t, nil
+}
+
+// eventPump continuously polls events and sends them to the channel
+func (t *TUI) eventPump() {
+	for {
+		select {
+		case <-t.quitCh:
+			return
+		default:
+			ev := t.screen.PollEvent()
+			t.eventCh <- ev
+		}
+	}
 }
 
 // UpdateSize updates the terminal size
@@ -88,6 +110,7 @@ func (t *TUI) UpdateSize() {
 // Close closes the TUI and restores terminal state
 func (t *TUI) Close() {
 	t.running = false
+	close(t.quitCh) // Stop event pump
 	t.screen.Fini()
 }
 
@@ -113,26 +136,16 @@ func (t *TUI) IsRunning() bool {
 
 // PollEvent waits for and returns the next event
 func (t *TUI) PollEvent() tcell.Event {
-	return t.screen.PollEvent()
+	return <-t.eventCh
 }
 
 // PollEventWithTimeout waits for an event with a timeout
 func (t *TUI) PollEventWithTimeout(timeout time.Duration) tcell.Event {
-	// Create a channel for the event
-	eventCh := make(chan tcell.Event, 1)
-
-	// Start goroutine to poll for events
-	go func() {
-		ev := t.screen.PollEvent()
-		eventCh <- ev
-	}()
-
-	// Wait for event or timeout
 	select {
-	case ev := <-eventCh:
+	case ev := <-t.eventCh:
 		return ev
 	case <-time.After(timeout):
-		return nil // No event within timeout
+		return nil
 	}
 }
 
