@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/ican2002/tetris/pkg/piece"
@@ -113,6 +114,26 @@ func (t *TUI) IsRunning() bool {
 // PollEvent waits for and returns the next event
 func (t *TUI) PollEvent() tcell.Event {
 	return t.screen.PollEvent()
+}
+
+// PollEventWithTimeout waits for an event with a timeout
+func (t *TUI) PollEventWithTimeout(timeout time.Duration) tcell.Event {
+	// Create a channel for the event
+	eventCh := make(chan tcell.Event, 1)
+
+	// Start goroutine to poll for events
+	go func() {
+		ev := t.screen.PollEvent()
+		eventCh <- ev
+	}()
+
+	// Wait for event or timeout
+	select {
+	case ev := <-eventCh:
+		return ev
+	case <-time.After(timeout):
+		return nil // No event within timeout
+	}
 }
 
 // PostEvent posts an event to the event queue

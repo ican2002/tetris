@@ -162,8 +162,8 @@ func main() {
 
 	// Main loop
 	style := tcell.StyleDefault
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
+	refreshTicker := time.NewTicker(50 * time.Millisecond) // 20 FPS refresh rate
+	defer refreshTicker.Stop()
 
 	for ui.IsRunning() {
 		// Draw current state
@@ -192,34 +192,36 @@ func main() {
 		// Update screen
 		ui.Sync()
 
-		// Handle events
-		ev := ui.PollEvent()
-		switch ev := ev.(type) {
-		case *tcell.EventKey:
-			if !client.IsConnected() && !gameOver {
-				// Any key to start connecting
-				logBuffer.Add("Reconnecting...")
-				go client.Connect()
-				continue
-			}
+		// Handle events with timeout
+		ev := ui.PollEventWithTimeout(100 * time.Millisecond)
+		if ev != nil {
+			switch ev := ev.(type) {
+			case *tcell.EventKey:
+				if !client.IsConnected() && !gameOver {
+					// Any key to start connecting
+					logBuffer.Add("Reconnecting...")
+					go client.Connect()
+					continue
+				}
 
-			if gameOver {
-				// Game over - Q or ESC to quit
-				if ev.Key() == tcell.KeyEsc || ev.Rune() == 'q' || ev.Rune() == 'Q' {
+				if gameOver {
+					// Game over - Q or ESC to quit
+					if ev.Key() == tcell.KeyEsc || ev.Rune() == 'q' || ev.Rune() == 'Q' {
+						ui.SetRunning(false)
+					}
+					continue
+				}
+
+				// Handle keyboard input
+				if handleKeyEvent(ev, client, logBuffer) {
 					ui.SetRunning(false)
 				}
-				continue
-			}
 
-			// Handle keyboard input
-			if handleKeyEvent(ev, client, logBuffer) {
-				ui.SetRunning(false)
-			}
-
-		case *tcell.EventResize:
-			ui.UpdateSize()
-			if !ui.CheckMinimumSize() {
-				statusMsg = "Terminal too small (min 80x30)"
+			case *tcell.EventResize:
+				ui.UpdateSize()
+				if !ui.CheckMinimumSize() {
+					statusMsg = "Terminal too small (min 80x30)"
+				}
 			}
 		}
 
