@@ -171,6 +171,13 @@ func main() {
 		if ev != nil {
 			switch ev := ev.(type) {
 			case *tcell.EventKey:
+				// Log the key that was pressed (for debugging)
+				keyName := tcell.KeyNames[ev.Key()]
+				if keyName == "" {
+					keyName = fmt.Sprintf("Rune(%c)", ev.Rune())
+				}
+				logBuffer.Add(fmt.Sprintf("Key: %s", keyName))
+
 				if !client.IsConnected() && !gameOver {
 					// Any key to start connecting
 					logBuffer.Add("Reconnecting...")
@@ -387,8 +394,12 @@ func handleKeyEvent(ev *tcell.EventKey, client *wsclient.Client, logBuffer *LogB
 			log.Printf("Failed to send command: %v", err)
 			logBuffer.Add(fmt.Sprintf("✗ Failed to send %s: %v", cmdType, err))
 		} else {
-			// Log key commands (but not all, to avoid spam)
+			// Log key commands (including rotate for debugging)
 			switch cmdType {
+			case protocol.MessageTypeRotate:
+				logBuffer.Add("→ rotate")
+			case protocol.MessageTypeMoveLeft, protocol.MessageTypeMoveRight, protocol.MessageTypeMoveDown:
+				logBuffer.Add(fmt.Sprintf("→ %s", cmdType))
 			case protocol.MessageTypePause, protocol.MessageTypeResume, protocol.MessageTypeHardDrop:
 				logBuffer.Add(fmt.Sprintf("→ %s", cmdType))
 			}
