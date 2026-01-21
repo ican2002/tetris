@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -15,6 +16,40 @@ import (
 	"github.com/ican2002/tetris/pkg/tui"
 	"github.com/ican2002/tetris/pkg/wsclient"
 )
+
+// LogBuffer manages log messages with thread safety
+type LogBuffer struct {
+	messages []string
+	mu       sync.Mutex
+	maxSize  int
+}
+
+func NewLogBuffer(size int) *LogBuffer {
+	return &LogBuffer{
+		messages: make([]string, 0, size),
+		maxSize:  size,
+	}
+}
+
+func (lb *LogBuffer) Add(msg string) {
+	lb.mu.Lock()
+	defer lb.mu.Unlock()
+
+	// Add timestamp
+	timestamp := time.Now().Format("15:04:05")
+	lb.messages = append(lb.messages, fmt.Sprintf("[%s] %s", timestamp, msg))
+
+	// Keep only the last maxSize messages
+	if len(lb.messages) > lb.maxSize {
+		lb.messages = lb.messages[1:]
+	}
+}
+
+func (lb *LogBuffer) GetMessages() []string {
+	lb.mu.Lock()
+	defer lb.mu.Unlock()
+	return lb.messages
+}
 
 var (
 	serverAddr = flag.String("server", "ws://localhost:8080/ws", "WebSocket server address")
@@ -27,6 +62,9 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
+	// Create log buffer
+	logBuffer := NewLogBuffer(100)
+
 	// Create TUI
 	ui, err := tui.New()
 	if err != nil {
@@ -36,12 +74,14 @@ func main() {
 
 	// Check minimum size
 	if !ui.CheckMinimumSize() {
-		log.Println("Terminal size must be at least 80x24")
+		log.Println("Terminal size must be at least 80x30")
 		return
 	}
 
+	logBuffer.Add("TUI initialized")
+
 	// Show welcome screen
-	showWelcome(ui)
+	showWelcome(ui, logBuffer)
 
 	// Create WebSocket client
 	client := wsclient.New(*serverAddr)
@@ -50,45 +90,73 @@ func main() {
 
 	// Set up callbacks
 	var currentState *protocol.StateMessage
-	var message string
+	var statusMsg string
 	var gameOver bool
 
 	client.SetOnConnected(func() {
-		message = "Connected to server"
+		statusMsg = "Connected to server"
+		logBuffer.Add("✓ Connected to server")
 	})
 	client.SetOnDisconnected(func() {
-		message = "Disconnected from server"
+		statusMsg = "Disconnected from server"
+		logBuffer.Add("✗ Disconnected from server")
 	})
 	client.SetOnError(func(err error) {
-		message = fmt.Sprintf("Error: %v", err)
+		statusMsg = fmt.Sprintf("Error: %v", err)
+		logBuffer.Add(fmt.Sprintf("✗ Error: %v", err))
 	})
 	client.SetOnStateChange(func(data []byte) {
 		var msg protocol.Message
 		if err := json.Unmarshal(data, &msg); err != nil {
+			logBuffer.Add(fmt.Sprintf("✗ Failed to parse message: %v", err))
 			return
 		}
 
 		switch msg.Type {
 		case protocol.MessageTypeState:
-			currentState = msg.Data.(*protocol.StateMessage)
+			// Parse StateMessage from map
+			state, err := parseStateMessage(msg.Data)
+			if err != nil {
+				logBuffer.Add(fmt.Sprintf("✗ Failed to parse state: %v", err))
+				return
+			}
+			currentState = state
+
 		case protocol.MessageTypeError:
-			errMsg := msg.Data.(protocol.ErrorMessage)
-			message = errMsg.Error
+			errMsg, err := parseErrorMessage(msg.Data)
+			if err != nil {
+				logBuffer.Add(fmt.Sprintf("✗ Failed to parse error: %v", err))
+				return
+			}
+			statusMsg = errMsg.Error
+			logBuffer.Add(fmt.Sprintf("✗ Server error: %s", errMsg.Error))
+
 		case protocol.MessageTypeGameOver:
 			gameOver = true
-			overMsg := msg.Data.(protocol.GameOverMessage)
-			message = fmt.Sprintf("Game Over! Score: %d", overMsg.Score)
+			overMsg, err := parseGameOverMessage(msg.Data)
+			if err != nil {
+				logBuffer.Add(fmt.Sprintf("✗ Failed to parse game over: %v", err))
+				return
+			}
+			statusMsg = fmt.Sprintf("Game Over! Score: %d", overMsg.Score)
+			logBuffer.Add(fmt.Sprintf("† Game Over! Score: %d, Level: %d, Lines: %d",
+				overMsg.Score, overMsg.Level, overMsg.Lines))
+
+		case protocol.MessageTypePing:
+			// Pings are handled automatically by the client
 		}
 	})
 
 	// Connect to server
 	ui.SetRunning(true)
-	message = "Connecting to server..."
+	statusMsg = "Connecting to server..."
+	logBuffer.Add("Connecting to " + *serverAddr)
 
 	// Start connection in background
 	go func() {
 		if err := client.Connect(); err != nil {
-			message = fmt.Sprintf("Failed to connect: %v", err)
+			statusMsg = fmt.Sprintf("Failed to connect: %v", err)
+			logBuffer.Add(fmt.Sprintf("✗ Failed to connect: %v", err))
 		}
 	}()
 
@@ -110,13 +178,16 @@ func main() {
 				ui.DrawGameOverScreen(currentState, style)
 			}
 		} else if currentState != nil {
-			// Draw game
+			// Draw game (use rows 1-20 for game)
 			ui.DrawBoard(2, 1, currentState, style)
 			ui.DrawInfoPanel(26, 1, currentState, style)
 		}
 
-		// Draw status bar
-		ui.DrawStatusBar(0, 23, 80, message, client.IsConnected(), style)
+		// Draw status bar (row 21)
+		ui.DrawStatusBar(0, 21, 80, statusMsg, client.IsConnected(), style)
+
+		// Draw log window (rows 22-29, 8 rows for logs)
+		drawLogWindow(ui, 0, 22, 80, 8, logBuffer, style)
 
 		// Update screen
 		ui.Sync()
@@ -125,8 +196,9 @@ func main() {
 		ev := ui.PollEvent()
 		switch ev := ev.(type) {
 		case *tcell.EventKey:
-			if !client.IsConnected() {
+			if !client.IsConnected() && !gameOver {
 				// Any key to start connecting
+				logBuffer.Add("Reconnecting...")
 				go client.Connect()
 				continue
 			}
@@ -140,41 +212,125 @@ func main() {
 			}
 
 			// Handle keyboard input
-			if handleKeyEvent(ev, client) {
+			if handleKeyEvent(ev, client, logBuffer) {
 				ui.SetRunning(false)
 			}
 
 		case *tcell.EventResize:
 			ui.UpdateSize()
 			if !ui.CheckMinimumSize() {
-				message = "Terminal too small (min 80x24)"
+				statusMsg = "Terminal too small (min 80x30)"
 			}
 		}
 
 		// Check for signals
 		select {
 		case <-sigChan:
+			logBuffer.Add("Received interrupt signal, shutting down...")
 			ui.SetRunning(false)
 		default:
 		}
 	}
 }
 
-func showWelcome(ui *tui.TUI) {
+// Helper functions to parse messages from map[string]interface{}
+
+func parseStateMessage(data interface{}) (*protocol.StateMessage, error) {
+	// Convert to JSON and then to StateMessage
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+
+	var state protocol.StateMessage
+	if err := json.Unmarshal(jsonBytes, &state); err != nil {
+		return nil, err
+	}
+
+	return &state, nil
+}
+
+func parseErrorMessage(data interface{}) (protocol.ErrorMessage, error) {
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return protocol.ErrorMessage{}, err
+	}
+
+	var errMsg protocol.ErrorMessage
+	if err := json.Unmarshal(jsonBytes, &errMsg); err != nil {
+		return protocol.ErrorMessage{}, err
+	}
+
+	return errMsg, nil
+}
+
+func parseGameOverMessage(data interface{}) (protocol.GameOverMessage, error) {
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return protocol.GameOverMessage{}, err
+	}
+
+	var overMsg protocol.GameOverMessage
+	if err := json.Unmarshal(jsonBytes, &overMsg); err != nil {
+		return protocol.GameOverMessage{}, err
+	}
+
+	return overMsg, nil
+}
+
+func showWelcome(ui *tui.TUI, logBuffer *LogBuffer) {
 	style := tcell.StyleDefault
 	ui.DrawWelcomeScreen(style)
 	ui.Sync()
+
+	logBuffer.Add("Welcome! Press any key to start...")
 
 	// Wait for any key
 	for {
 		ev := ui.PollEvent()
 		if _, ok := ev.(*tcell.EventKey); ok {
+			logBuffer.Add("Starting game...")
 			break
 		}
 	}
 }
 
-func handleKeyEvent(ev *tcell.EventKey, client *wsclient.Client) bool {
+func drawLogWindow(ui *tui.TUI, x, y, width, height int, logBuffer *LogBuffer, style tcell.Style) {
+	// Draw box border using TUI's DrawBox method
+	ui.DrawBox(x, y, width, height, "Messages", style)
+
+	// Get log messages
+	messages := logBuffer.GetMessages()
+
+	// Calculate how many messages we can show
+	maxLines := height - 2
+	startIdx := len(messages) - maxLines
+	if startIdx < 0 {
+		startIdx = 0
+	}
+
+	// Draw messages (bottom-up, showing newest)
+	for i := 0; i < maxLines && i < len(messages); i++ {
+		msgIdx := startIdx + i
+		if msgIdx >= len(messages) {
+			break
+		}
+
+		lineY := y + height - 2 - i
+		msg := messages[msgIdx]
+
+		// Truncate if too long
+		maxMsgLen := width - 4
+		if len(msg) > maxMsgLen {
+			msg = msg[:maxMsgLen]
+		}
+
+		// Draw message using TUI's DrawText method
+		ui.DrawText(x+2, lineY, msg, style)
+	}
+}
+
+func handleKeyEvent(ev *tcell.EventKey, client *wsclient.Client, logBuffer *LogBuffer) bool {
 	var cmdType protocol.MessageType
 
 	switch ev.Key() {
@@ -187,10 +343,12 @@ func handleKeyEvent(ev *tcell.EventKey, client *wsclient.Client) bool {
 	case tcell.KeyUp:
 		cmdType = protocol.MessageTypeRotate
 	case tcell.KeyEscape:
+		logBuffer.Add("Quit requested (ESC)")
 		return true // Signal to quit
 	case tcell.KeyEnter:
 		cmdType = protocol.MessageTypeHardDrop
 	case tcell.KeyCtrlC:
+		logBuffer.Add("Quit requested (Ctrl+C)")
 		return true // Signal to quit
 	default:
 		switch ev.Rune() {
@@ -201,6 +359,7 @@ func handleKeyEvent(ev *tcell.EventKey, client *wsclient.Client) bool {
 		case 'r', 'R':
 			cmdType = protocol.MessageTypeResume
 		case 'q', 'Q':
+			logBuffer.Add("Quit requested (Q)")
 			return true // Signal to quit
 		default:
 			return false
@@ -212,11 +371,19 @@ func handleKeyEvent(ev *tcell.EventKey, client *wsclient.Client) bool {
 		data, err := json.Marshal(cmd)
 		if err != nil {
 			log.Printf("Failed to marshal command: %v", err)
+			logBuffer.Add(fmt.Sprintf("✗ Failed to marshal command: %v", err))
 			return false
 		}
 
 		if err := client.Send(data); err != nil {
 			log.Printf("Failed to send command: %v", err)
+			logBuffer.Add(fmt.Sprintf("✗ Failed to send %s: %v", cmdType, err))
+		} else {
+			// Log key commands (but not all, to avoid spam)
+			switch cmdType {
+			case protocol.MessageTypePause, protocol.MessageTypeResume, protocol.MessageTypeHardDrop:
+				logBuffer.Add(fmt.Sprintf("→ %s", cmdType))
+			}
 		}
 	}
 
