@@ -210,8 +210,9 @@ func (c *Client) readPump() {
 
 // writePump handles writing messages to the WebSocket connection
 func (c *Client) writePump() {
-	// Update game state every 100ms for smooth gameplay
-	ticker := time.NewTicker(100 * time.Millisecond)
+	// Update game state periodically for smooth gameplay
+	// Use a longer interval to avoid race conditions with user input
+	ticker := time.NewTicker(200 * time.Millisecond)
 	defer func() {
 		ticker.Stop()
 		c.conn.Close()
@@ -274,18 +275,25 @@ func (c *Client) handleMessage(data []byte) {
 
 	switch msgType {
 	case protocol.MessageTypeMoveLeft:
+		log.Printf("[Client %s] Command: move_left", c.id)
 		c.game.MoveLeft()
 	case protocol.MessageTypeMoveRight:
+		log.Printf("[Client %s] Command: move_right", c.id)
 		c.game.MoveRight()
 	case protocol.MessageTypeMoveDown:
+		log.Printf("[Client %s] Command: move_down", c.id)
 		c.game.MoveDown()
 	case protocol.MessageTypeRotate:
+		log.Printf("[Client %s] Command: rotate", c.id)
 		c.game.Rotate()
 	case protocol.MessageTypeHardDrop:
+		log.Printf("[Client %s] Command: hard_drop", c.id)
 		c.game.HardDrop()
 	case protocol.MessageTypePause:
+		log.Printf("[Client %s] Command: pause", c.id)
 		c.game.Pause()
 	case protocol.MessageTypeResume:
+		log.Printf("[Client %s] Command: resume", c.id)
 		c.game.Resume()
 	case protocol.MessageTypePong:
 		// Pong is handled by SetPongHandler
