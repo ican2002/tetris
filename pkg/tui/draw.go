@@ -16,25 +16,55 @@ func (t *TUI) DrawBoard(x, y int, state *protocol.StateMessage, style tcell.Styl
 	// Draw board border
 	t.DrawBox(x, y, boardWidth, boardHeight, "Tetris", style)
 
+	// Create a display board that includes locked pieces and current piece
+	displayBoard := make([][]string, 20)
+	for row := 0; row < 20; row++ {
+		displayBoard[row] = make([]string, 10)
+		if row < len(state.Board) {
+			for col := 0; col < 10; col++ {
+				if col < len(state.Board[row]) {
+					displayBoard[row][col] = state.Board[row][col]
+				}
+			}
+		}
+	}
+
+	// Overlay the current piece on the display board
+	currentPiece := state.CurrentPiece
+	if currentPiece.Type != 0 { // 0 is the zero value for piece.Type
+		shape := getPieceShape(currentPiece)
+		if shape != nil {
+			for row := 0; row < len(shape); row++ {
+				for col := 0; col < len(shape[row]); col++ {
+					if shape[row][col] == 1 {
+						boardY := currentPiece.Y + row
+						boardX := currentPiece.X + col
+						if boardY >= 0 && boardY < 20 && boardX >= 0 && boardX < 10 {
+							displayBoard[boardY][boardX] = string(currentPiece.Color)
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Draw cells
 	for row := 0; row < 20; row++ {
 		for col := 0; col < 10; col++ {
 			cellX := x + 1 + col*2
 			cellY := y + 1 + row
 
-			if row < len(state.Board) && col < len(state.Board[row]) {
-				colorStr := state.Board[row][col]
-				if colorStr != "" {
-					// Filled cell
-					cellStyle := style.Background(GetColor(piece.Color(colorStr)))
-					t.screen.SetContent(cellX, cellY, ' ', nil, cellStyle)
-					t.screen.SetContent(cellX+1, cellY, ' ', nil, cellStyle)
-				} else {
-					// Empty cell
-					dimStyle := style.Dim(true)
-					t.screen.SetContent(cellX, cellY, '·', nil, dimStyle)
-					t.screen.SetContent(cellX+1, cellY, '·', nil, dimStyle)
-				}
+			colorStr := displayBoard[row][col]
+			if colorStr != "" {
+				// Filled cell
+				cellStyle := style.Background(GetColor(piece.Color(colorStr)))
+				t.screen.SetContent(cellX, cellY, ' ', nil, cellStyle)
+				t.screen.SetContent(cellX+1, cellY, ' ', nil, cellStyle)
+			} else {
+				// Empty cell
+				dimStyle := style.Dim(true)
+				t.screen.SetContent(cellX, cellY, '·', nil, dimStyle)
+				t.screen.SetContent(cellX+1, cellY, '·', nil, dimStyle)
 			}
 		}
 	}
