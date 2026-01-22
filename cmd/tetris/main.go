@@ -5,8 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -55,6 +58,14 @@ var (
 
 func main() {
 	flag.Parse()
+
+	// Ignore SIGINT (Ctrl+C) - let tcell handle it as a key event
+	// This prevents the terminal from sending the signal to the process
+	signal.Ignore(syscall.SIGINT)
+
+	// Set up signal handling for graceful shutdown (SIGTERM only)
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGTERM)
 
 	// Create log buffer
 	logBuffer := NewLogBuffer(100)
@@ -235,6 +246,14 @@ func main() {
 
 		// Update screen
 		ui.Sync()
+
+		// Check for shutdown signals
+		select {
+		case <-sigChan:
+			logBuffer.Add("Received shutdown signal")
+			ui.SetRunning(false)
+		default:
+		}
 	}
 }
 
