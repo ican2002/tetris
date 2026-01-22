@@ -8,6 +8,17 @@ import (
 	"github.com/ican2002/tetris/pkg/protocol"
 )
 
+// isValidPieceType checks if a piece type is valid (one of the 7 Tetris pieces)
+func isValidPieceType(t piece.Type) bool {
+	switch t {
+	case piece.TypeI, piece.TypeO, piece.TypeT,
+		piece.TypeS, piece.TypeZ, piece.TypeJ, piece.TypeL:
+		return true
+	default:
+		return false
+	}
+}
+
 // DrawBoard draws the Tetris board
 func (t *TUI) DrawBoard(x, y int, state *protocol.StateMessage, style tcell.Style) {
 	// Create a display board that includes locked pieces and current piece
@@ -25,7 +36,8 @@ func (t *TUI) DrawBoard(x, y int, state *protocol.StateMessage, style tcell.Styl
 
 	// Overlay the current piece on the display board
 	currentPiece := state.CurrentPiece
-	if currentPiece.Type != 0 { // 0 is the zero value for piece.Type
+	// Check if the piece type is valid (TypeI = 0, so we need to check against valid types)
+	if isValidPieceType(currentPiece.Type) && currentPiece.Color != "" {
 		shape := getPieceShape(currentPiece)
 		if shape != nil {
 			for row := 0; row < len(shape); row++ {
@@ -103,9 +115,18 @@ func (t *TUI) DrawPiecePreview(x, y int, pieceData protocol.PieceData, style tce
 	// Clear the preview area
 	t.FillRect(x, y, 8, 4, ' ', style)
 
+	// Validate piece data (TypeI = 0, so we can't use "!= 0" check)
+	if !isValidPieceType(pieceData.Type) || pieceData.Color == "" {
+		// Empty/invalid piece data, show placeholder
+		t.DrawText(x+2, y+1, "No piece", style.Dim(true))
+		return
+	}
+
 	// Get piece shape
 	shape := getPieceShape(pieceData)
 	if shape == nil {
+		// Shape not found, show error
+		t.DrawText(x+1, y+1, "Error", style.Dim(true).Foreground(tcell.ColorRed))
 		return
 	}
 
@@ -151,7 +172,7 @@ func (t *TUI) DrawStatusBar(x, y, width int, message string, connected bool, sty
 	}
 
 	// Draw quit hint
-	hintText := "Q: Quit | P: Pause | Arrows: Move | Space: Drop"
+	hintText := "ESC/Ctrl+C/D/Q: Quit | P: Pause | Space: Drop | Arrows: Move"
 	hintX := x + width - len(hintText) - 2
 	if hintX > x+len(statusText)+4 {
 		t.DrawText(hintX, y, hintText, style.Reverse(true).Dim(true))
@@ -182,7 +203,8 @@ func (t *TUI) DrawWelcomeScreen(style tcell.Style) {
 		"  ➡️  Arrow Right - Move Right",
 		"  ␣ Space        - Hard Drop",
 		"  P              - Pause/Resume",
-		"  Q / ESC        - Quit",
+		"  Q / ESC        - Quit game",
+		"  Ctrl+C/D/Q/X   - Exit",
 		"",
 		"Press any key to connect...",
 	}

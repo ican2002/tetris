@@ -160,14 +160,14 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 // handleHealth handles health check requests
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	clientCount := len(s.clients)
+	s.mu.RUnlock()
+
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
-		"status": "ok",
-		"clients": func() string {
-			s.mu.RLock()
-			defer s.mu.RUnlock()
-			return string(rune(len(s.clients)))
-		}(),
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "ok",
+		"clients": clientCount,
 	})
 }
 

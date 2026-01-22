@@ -1,6 +1,7 @@
 package game
 
 import (
+	"sync"
 	"time"
 
 	"github.com/ican2002/tetris/pkg/board"
@@ -38,6 +39,7 @@ type Game struct {
 	lines        int
 	dropInterval time.Duration
 	lastDrop     time.Time
+	mu           sync.RWMutex // Protects game state during concurrent access
 }
 
 // New creates a new game
@@ -100,6 +102,9 @@ func (g *Game) prepareNext() {
 
 // MoveLeft attempts to move the current piece left
 func (g *Game) MoveLeft() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
 	if g.state != StatePlaying {
 		return false
 	}
@@ -113,6 +118,9 @@ func (g *Game) MoveLeft() bool {
 
 // MoveRight attempts to move the current piece right
 func (g *Game) MoveRight() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
 	if g.state != StatePlaying {
 		return false
 	}
@@ -126,6 +134,9 @@ func (g *Game) MoveRight() bool {
 
 // MoveDown attempts to move the current piece down (soft drop)
 func (g *Game) MoveDown() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
 	if g.state != StatePlaying {
 		return false
 	}
@@ -137,7 +148,7 @@ func (g *Game) MoveDown() bool {
 	success := g.current.MoveDown(collision)
 	if !success {
 		// Piece locked, spawn new piece
-		g.lockAndSpawn()
+		g.lockAndSpawnLocked()
 	}
 
 	return success
@@ -145,6 +156,9 @@ func (g *Game) MoveDown() bool {
 
 // HardDrop drops the piece to the lowest position
 func (g *Game) HardDrop() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
 	if g.state != StatePlaying {
 		return 0
 	}
@@ -159,13 +173,16 @@ func (g *Game) HardDrop() int {
 	g.score += dropDistance * g.level
 
 	// Lock and spawn new piece
-	g.lockAndSpawn()
+	g.lockAndSpawnLocked()
 
 	return dropDistance
 }
 
 // Rotate attempts to rotate the current piece
 func (g *Game) Rotate() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
 	if g.state != StatePlaying {
 		return false
 	}
@@ -178,7 +195,15 @@ func (g *Game) Rotate() bool {
 }
 
 // lockAndSpawn locks the current piece and spawns a new one
+// Note: This method assumes mu is NOT held and will lock it itself
 func (g *Game) lockAndSpawn() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.lockAndSpawnLocked()
+}
+
+// lockAndSpawnLocked is the internal implementation that assumes mu is already held
+func (g *Game) lockAndSpawnLocked() {
 	// Lock the piece
 	g.board.LockPiece(g.current)
 
@@ -231,6 +256,9 @@ func calculateDropInterval(level int) time.Duration {
 
 // Pause pauses the game
 func (g *Game) Pause() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
 	if g.state == StatePlaying {
 		g.state = StatePaused
 	}
@@ -238,6 +266,9 @@ func (g *Game) Pause() {
 
 // Resume resumes the game
 func (g *Game) Resume() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
 	if g.state == StatePaused {
 		g.state = StatePlaying
 		g.lastDrop = time.Now()
@@ -255,6 +286,9 @@ func (g *Game) TogglePause() {
 
 // Update updates the game state (should be called in a loop)
 func (g *Game) Update() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
 	if g.state != StatePlaying {
 		return false
 	}
@@ -270,7 +304,7 @@ func (g *Game) Update() bool {
 		// Try to move down
 		if !g.current.MoveDown(collision) {
 			// Piece locked, spawn new piece
-			g.lockAndSpawn()
+			g.lockAndSpawnLocked()
 		}
 
 		return true
@@ -344,6 +378,57 @@ type GameState struct {
 	Level        int           `json:"level"`
 	Lines        int           `json:"lines"`
 	DropInterval time.Duration `json:"drop_interval"`
+}
+
+// GetStateSnapshot returns a consistent snapshot of the game state for serialization
+// This ensures that current and next pieces are never the same object
+func (g *Game) GetStateSnapshot() (boardCopy [][]string, current *piece.Piece, next *piece.Piece, stateStr string, score, level, lines int, dropInterval time.Duration) {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	// Clone board
+	boardCopy = make([][]string, board.Height)
+	b := g.board
+	for y := 0; y < board.Height; y++ {
+		boardCopy[y] = make([]string, board.Width)
+		for x := 0; x < board.Width; x++ {
+			cell, _ := b.GetCell(x, y)
+			if cell.Empty {
+				boardCopy[y][x] = ""
+			} else {
+				boardCopy[y][x] = string(cell.Color)
+			}
+		}
+	}
+
+	// Clone pieces to avoid shared references
+	if g.current != nil {
+		current = &piece.Piece{
+			Type:     g.current.Type,
+			Color:    g.current.Color,
+			X:        g.current.X,
+			Y:        g.current.Y,
+			Rotation: g.current.Rotation,
+		}
+	}
+
+	if g.next != nil {
+		next = &piece.Piece{
+			Type:     g.next.Type,
+			Color:    g.next.Color,
+			X:        g.next.X,
+			Y:        g.next.Y,
+			Rotation: g.next.Rotation,
+		}
+	}
+
+	stateStr = g.state.String()
+	score = g.score
+	level = g.level
+	lines = g.lines
+	dropInterval = g.dropInterval
+
+	return
 }
 
 // GetGameState returns a complete snapshot of the game state

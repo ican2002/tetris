@@ -5,11 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"os"
-	"os/signal"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -58,10 +55,6 @@ var (
 
 func main() {
 	flag.Parse()
-
-	// Set up signal handling for graceful shutdown
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// Create log buffer
 	logBuffer := NewLogBuffer(100)
@@ -178,22 +171,27 @@ func main() {
 				}
 				logBuffer.Add(fmt.Sprintf("Key: %s", keyName))
 
-				if !client.IsConnected() && !gameOver {
-					// Any key to start connecting
-					logBuffer.Add("Reconnecting...")
-					go client.Connect()
+				// Check for quit keys FIRST (before any other logic)
+				// This prevents Q key from triggering reconnect when not connected
+				if isQuitKey(ev) {
+					logBuffer.Add("Quit requested")
+					ui.SetRunning(false)
 					continue
 				}
 
 				if gameOver {
-					// Game over - Q or ESC to quit
-					if ev.Key() == tcell.KeyEsc || ev.Rune() == 'q' || ev.Rune() == 'Q' {
-						ui.SetRunning(false)
-					}
+					// Game over state - already handled above
 					continue
 				}
 
-				// Handle keyboard input immediately
+				if !client.IsConnected() && !gameOver {
+					// Any non-quit key to start connecting
+					logBuffer.Add("Connecting...")
+					go client.Connect()
+					continue
+				}
+
+				// Handle game control keys
 				if handleKeyEvent(ev, client, logBuffer) {
 					ui.SetRunning(false)
 					continue
@@ -237,14 +235,6 @@ func main() {
 
 		// Update screen
 		ui.Sync()
-
-		// Check for signals
-		select {
-		case <-sigChan:
-			logBuffer.Add("Received interrupt signal, shutting down...")
-			ui.SetRunning(false)
-		default:
-		}
 	}
 }
 
@@ -357,14 +347,8 @@ func handleKeyEvent(ev *tcell.EventKey, client *wsclient.Client, logBuffer *LogB
 		cmdType = protocol.MessageTypeMoveDown
 	case tcell.KeyUp:
 		cmdType = protocol.MessageTypeRotate
-	case tcell.KeyEscape:
-		logBuffer.Add("Quit requested (ESC)")
-		return true // Signal to quit
 	case tcell.KeyEnter:
 		cmdType = protocol.MessageTypeHardDrop
-	case tcell.KeyCtrlC:
-		logBuffer.Add("Quit requested (Ctrl+C)")
-		return true // Signal to quit
 	default:
 		switch ev.Rune() {
 		case ' ', 'x', 'X':
@@ -373,9 +357,6 @@ func handleKeyEvent(ev *tcell.EventKey, client *wsclient.Client, logBuffer *LogB
 			cmdType = protocol.MessageTypePause
 		case 'r', 'R':
 			cmdType = protocol.MessageTypeResume
-		case 'q', 'Q':
-			logBuffer.Add("Quit requested (Q)")
-			return true // Signal to quit
 		default:
 			return false
 		}
@@ -406,5 +387,19 @@ func handleKeyEvent(ev *tcell.EventKey, client *wsclient.Client, logBuffer *LogB
 		}
 	}
 
+	return false
+}
+
+// isQuitKey checks if the key event is a quit command
+func isQuitKey(ev *tcell.EventKey) bool {
+	switch ev.Key() {
+	case tcell.KeyEscape, tcell.KeyCtrlC, tcell.KeyCtrlD, tcell.KeyCtrlQ, tcell.KeyCtrlX:
+		return true
+	default:
+		switch ev.Rune() {
+		case 'q', 'Q':
+			return true
+		}
+	}
 	return false
 }

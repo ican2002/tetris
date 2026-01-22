@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/ican2002/tetris/pkg/board"
 	"github.com/ican2002/tetris/pkg/game"
 	"github.com/ican2002/tetris/pkg/piece"
 )
@@ -87,33 +86,28 @@ type GameOverMessage struct {
 
 // NewStateMessage creates a state message from game state
 func NewStateMessage(g *game.Game) *Message {
-	b := g.GetBoard()
-	pieces := make([][]string, board.Height)
+	// Use GetStateSnapshot for consistent state and proper piece cloning
+	boardCopy, current, next, stateStr, score, level, lines, dropInterval := g.GetStateSnapshot()
 
-	for y := 0; y < board.Height; y++ {
-		pieces[y] = make([]string, board.Width)
-		for x := 0; x < board.Width; x++ {
-			cell, _ := b.GetCell(x, y)
-			if cell.Empty {
-				pieces[y][x] = ""
-			} else {
-				pieces[y][x] = string(cell.Color)
-			}
-		}
+	// Validate that pieces are properly set (for debugging)
+	if current == nil {
+		// This should never happen in a valid game state
+		current = &piece.Piece{}
+	}
+	if next == nil {
+		// This should never happen after the first spawn
+		next = &piece.Piece{}
 	}
 
-	current := g.GetCurrentPiece()
-	next := g.GetNextPiece()
-
 	state := StateMessage{
-		Board:        pieces,
+		Board:        boardCopy,
 		CurrentPiece: pieceToData(current),
 		NextPiece:    pieceToData(next),
-		State:        g.GetState().String(),
-		Score:        g.GetScore(),
-		Level:        g.GetLevel(),
-		Lines:        g.GetLines(),
-		DropInterval: int(g.GetDropInterval().Milliseconds()),
+		State:        stateStr,
+		Score:        score,
+		Level:        level,
+		Lines:        lines,
+		DropInterval: int(dropInterval.Milliseconds()),
 	}
 
 	return &Message{
