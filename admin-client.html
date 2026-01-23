@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tetris Server Admin</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: #3498db;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            margin-bottom: 10px;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+
+        .stat-card h3 {
+            color: #6c757d;
+            font-size: 0.9rem;
+            margin-bottom: 5px;
+        }
+
+        .stat-card .value {
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #3498db;
+        }
+
+        .content {
+            padding: 20px;
+        }
+
+        .clients-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        .clients-table th,
+        .clients-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+        .clients-table th {
+            background: #f8f9fa;
+            font-weight: bold;
+            color: #495057;
+            position: sticky;
+            top: 0;
+        }
+
+        .clients-table tr:hover {
+            background: #f8f9fa;
+        }
+
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+
+        .status-online {
+            background: #28a745;
+        }
+
+        .status-offline {
+            background: #dc3545;
+        }
+
+        .game-state {
+            font-weight: bold;
+        }
+
+        .game-playing {
+            color: #28a745;
+        }
+
+        .game-paused {
+            color: #ffc107;
+        }
+
+        .game-over {
+            color: #dc3545;
+        }
+
+        .last-update {
+            text-align: right;
+            color: #6c757d;
+            font-size: 0.9rem;
+            margin-top: 10px;
+        }
+
+        .ws-status {
+            text-align: center;
+            padding: 10px;
+            background: #e9ecef;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+
+        .ws-connected {
+            color: #28a745;
+        }
+
+        .ws-disconnected {
+            color: #dc3545;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                border-radius: 0;
+            }
+
+            .clients-table {
+                display: block;
+                overflow-x: auto;
+            }
+
+            .stats {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Tetris Server Admin</h1>
+            <p>实时监控游戏服务器状态</p>
+        </div>
+
+        <div class="ws-status" id="ws-status">
+            <span class="status-indicator status-offline"></span>
+            <span id="ws-status-text">未连接</span>
+        </div>
+
+        <div class="stats">
+            <div class="stat-card">
+                <h3>当前连接数</h3>
+                <div class="value" id="current-clients">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>总连接数</h3>
+                <div class="value" id="total-clients">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>最高连接数</h3>
+                <div class="value" id="peak-clients">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>游戏进行中</h3>
+                <div class="value" id="playing-games">0</div>
+            </div>
+        </div>
+
+        <div class="content">
+            <h2>客户端列表</h2>
+            <table class="clients-table">
+                <thead>
+                    <tr>
+                        <th>客户端ID</th>
+                        <th>连接地址</th>
+                        <th>连接时间</th>
+                        <th>状态</th>
+                        <th>得分</th>
+                        <th>等级</th>
+                        <th>消除行数</th>
+                    </tr>
+                </thead>
+                <tbody id="clients-list">
+                    <!-- 客户端数据将通过WebSocket动态填充 -->
+                </tbody>
+            </table>
+            <div class="last-update">
+                最后更新: <span id="last-update-time">--:--:--</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let reconnectInterval = null;
+        let totalClients = 0;
+        let peakClients = 0;
+
+        function connect() {
+            const wsUrl = 'ws://' + window.location.host + '/ws/admin';
+            updateWSStatus(false, '正在连接...');
+
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = function() {
+                updateWSStatus(true, '已连接');
+                if (reconnectInterval) {
+                    clearTimeout(reconnectInterval);
+                    reconnectInterval = null;
+                }
+            };
+
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                updateClients(data);
+            };
+
+            ws.onclose = function() {
+                updateWSStatus(false, '连接已关闭，正在重连...');
+                reconnectInterval = setTimeout(connect, 3000);
+            };
+
+            ws.onerror = function(error) {
+                updateWSStatus(false, '连接错误，正在重连...');
+                console.error('WebSocket error:', error);
+            };
+        }
+
+        function updateWSStatus(connected, text) {
+            const statusDiv = document.getElementById('ws-status');
+            const statusIndicator = statusDiv.querySelector('.status-indicator');
+            const statusText = document.getElementById('ws-status-text');
+
+            if (connected) {
+                statusIndicator.className = 'status-indicator status-online';
+                statusText.className = 'ws-connected';
+            } else {
+                statusIndicator.className = 'status-indicator status-offline';
+                statusText.className = 'ws-disconnected';
+            }
+            statusText.textContent = text;
+        }
+
+        function updateClients(data) {
+            // 更新统计信息
+            document.getElementById('current-clients').textContent = data.currentClients;
+            
+            // 更新总连接数和最高连接数
+            document.getElementById('total-clients').textContent = data.totalClients;
+            document.getElementById('peak-clients').textContent = data.peakClients;
+            
+            // 更新游戏进行中数量
+            const playingGames = data.clients.filter(client => client.gameState === 'playing').length;
+            document.getElementById('playing-games').textContent = playingGames;
+
+            // 更新客户端列表
+            const clientsList = document.getElementById('clients-list');
+            clientsList.innerHTML = '';
+
+            data.clients.forEach(client => {
+                const row = document.createElement('tr');
+                
+                // 客户端ID
+                const idCell = document.createElement('td');
+                idCell.textContent = client.id;
+                row.appendChild(idCell);
+
+                // 连接地址
+                const addrCell = document.createElement('td');
+                addrCell.textContent = client.address;
+                row.appendChild(addrCell);
+
+                // 连接时间
+                const timeCell = document.createElement('td');
+                const connectTime = new Date(client.connectTime);
+                timeCell.textContent = connectTime.toLocaleString();
+                row.appendChild(timeCell);
+
+                // 游戏状态
+                const stateCell = document.createElement('td');
+                const stateSpan = document.createElement('span');
+                stateSpan.className = `game-state game-${client.gameState}`;
+                stateSpan.textContent = getGameStateText(client.gameState);
+                stateCell.appendChild(stateSpan);
+                row.appendChild(stateCell);
+
+                // 得分
+                const scoreCell = document.createElement('td');
+                scoreCell.textContent = client.score;
+                row.appendChild(scoreCell);
+
+                // 等级
+                const levelCell = document.createElement('td');
+                levelCell.textContent = client.level;
+                row.appendChild(levelCell);
+
+                // 消除行数
+                const linesCell = document.createElement('td');
+                linesCell.textContent = client.lines;
+                row.appendChild(linesCell);
+
+                clientsList.appendChild(row);
+            });
+
+            // 更新最后更新时间
+            const now = new Date();
+            document.getElementById('last-update-time').textContent = now.toLocaleTimeString();
+        }
+
+        function getGameStateText(state) {
+            const stateMap = {
+                'playing': '游戏中',
+                'paused': '已暂停',
+                'gameover': '游戏结束'
+            };
+            return stateMap[state] || state;
+        }
+
+        // 页面加载时自动连接
+        window.onload = function() {
+            connect();
+        };
+    </script>
+</body>
+</html>

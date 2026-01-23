@@ -282,7 +282,7 @@
                 updateStatus(true);
                 log('✅ 已连接到服务器', 'info');
                 if (reconnectInterval) {
-                    clearInterval(reconnectInterval);
+                    clearTimeout(reconnectInterval);
                     reconnectInterval = null;
                 }
             };
@@ -359,8 +359,89 @@
             }
         }
 
+        // Piece type to name mapping
+        const PIECE_NAMES = ['I', 'O', 'T', 'S', 'Z', 'J', 'L'];
+
+        // Get piece shape for rotation
+        function getPieceShape(type, rotation) {
+            const shapes = {
+                0: [ // I
+                    [[1, 1, 1, 1]],
+                    [[1], [1], [1], [1]],
+                    [[1, 1, 1, 1]],
+                    [[1], [1], [1], [1]]
+                ],
+                1: [ // O
+                    [[1, 1], [1, 1]],
+                    [[1, 1], [1, 1]],
+                    [[1, 1], [1, 1]],
+                    [[1, 1], [1, 1]]
+                ],
+                2: [ // T
+                    [[0, 1, 0], [1, 1, 1]],
+                    [[1, 0], [1, 1], [0, 1]],
+                    [[1, 1, 1], [0, 1, 0]],
+                    [[0, 1], [1, 1], [1, 0]]
+                ],
+                3: [ // S
+                    [[0, 1, 1], [1, 1, 0]],
+                    [[1, 0], [1, 1], [0, 1]],
+                    [[0, 1, 1], [1, 1, 0]],
+                    [[1, 0], [1, 1], [0, 1]]
+                ],
+                4: [ // Z
+                    [[1, 1, 0], [0, 1, 1]],
+                    [[0, 1], [1, 1], [1, 0]],
+                    [[1, 1, 0], [0, 1, 1]],
+                    [[0, 1], [1, 1], [1, 0]]
+                ],
+                5: [ // J
+                    [[1, 0, 0], [1, 1, 1]],
+                    [[1, 1], [1, 0], [1, 0]],
+                    [[1, 1, 1], [0, 0, 1]],
+                    [[0, 1], [0, 1], [1, 1]]
+                ],
+                6: [ // L
+                    [[0, 0, 1], [1, 1, 1]],
+                    [[1, 0], [1, 0], [1, 1]],
+                    [[1, 1, 1], [1, 0, 0]],
+                    [[1, 1], [0, 1], [0, 1]]
+                ]
+            };
+            return shapes[type]?.[rotation] || shapes[type]?.[0] || [[1]];
+        }
+
         function updateGameState(state) {
-            // Update board
+            // Create a display board that combines locked cells and current piece
+            const displayBoard = [];
+            for (let y = 0; y < 20; y++) {
+                displayBoard[y] = [];
+                for (let x = 0; x < 10; x++) {
+                    displayBoard[y][x] = state.board[y][x] || '';
+                }
+            }
+
+            // Render current piece on display board
+            if (state.current_piece) {
+                const piece = state.current_piece;
+                const shape = getPieceShape(piece.type, piece.rotation);
+                const px = piece.x;
+                const py = piece.y;
+
+                for (let ry = 0; ry < shape.length; ry++) {
+                    for (let rx = 0; rx < shape[ry].length; rx++) {
+                        if (shape[ry][rx]) {
+                            const bx = px + rx;
+                            const by = py + ry;
+                            if (by >= 0 && by < 20 && bx >= 0 && bx < 10) {
+                                displayBoard[by][bx] = piece.color;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Update board display
             const board = document.getElementById('board');
             board.innerHTML = '';
 
@@ -369,7 +450,7 @@
                     const cell = document.createElement('div');
                     cell.className = 'cell';
 
-                    const color = state.board[y][x];
+                    const color = displayBoard[y][x];
                     if (color) {
                         cell.classList.add('filled');
                         cell.style.backgroundColor = color;
@@ -383,8 +464,17 @@
             document.getElementById('score').textContent = state.score;
             document.getElementById('level').textContent = state.level;
             document.getElementById('lines').textContent = state.lines;
-            document.getElementById('current-piece').textContent = state.current_piece.type || '-';
-            document.getElementById('next-piece').textContent = state.next_piece.type || '-';
+
+            // Convert piece type to name
+            const currentName = (state.current_piece && state.current_piece.type !== undefined)
+                ? PIECE_NAMES[state.current_piece.type] || '-'
+                : '-';
+            const nextName = (state.next_piece && state.next_piece.type !== undefined)
+                ? PIECE_NAMES[state.next_piece.type] || '-'
+                : '-';
+
+            document.getElementById('current-piece').textContent = currentName;
+            document.getElementById('next-piece').textContent = nextName;
             document.getElementById('game-state').textContent = state.state;
         }
 

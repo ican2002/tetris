@@ -23,11 +23,13 @@ var upgrader = websocket.Upgrader{
 
 // Client represents a WebSocket client connection
 type Client struct {
-	id     string
-	conn   *websocket.Conn
-	send   chan []byte
-	server *Server
-	game   *game.Game
+	id          string
+	conn        *websocket.Conn
+	send        chan []byte
+	server      *Server
+	game        *game.Game
+	address     string
+	connectTime time.Time
 
 	// Heartbeat
 	lastPong     time.Time
@@ -37,14 +39,20 @@ type Client struct {
 
 // Server represents the WebSocket server
 type Server struct {
-	clients    map[string]*Client
-	register   chan *Client
-	unregister chan *Client
-	mu         sync.RWMutex
+	clients         map[string]*Client
+	adminClients    map[string]*websocket.Conn
+	register        chan *Client
+	unregister      chan *Client
+	registerAdmin   chan *websocket.Conn
+	unregisterAdmin chan *websocket.Conn
+	mu              sync.RWMutex
+	adminMu         sync.RWMutex
 
 	// Configuration
 	PingInterval time.Duration
 	PongTimeout  time.Duration
+	TotalClients int
+	PeakClients  int
 
 	// HTTP Server
 	httpServer *http.Server
@@ -54,12 +62,17 @@ type Server struct {
 // New creates a new WebSocket server
 func New(addr string) *Server {
 	return &Server{
-		clients:      make(map[string]*Client),
-		register:     make(chan *Client),
-		unregister:   make(chan *Client),
-		PingInterval: 30 * time.Second,
-		PongTimeout:  60 * time.Second,
-		addr:         addr,
+		clients:         make(map[string]*Client),
+		adminClients:    make(map[string]*websocket.Conn),
+		register:        make(chan *Client),
+		unregister:      make(chan *Client),
+		registerAdmin:   make(chan *websocket.Conn),
+		unregisterAdmin: make(chan *websocket.Conn),
+		PingInterval:    30 * time.Second,
+		PongTimeout:     60 * time.Second,
+		TotalClients:    0,
+		PeakClients:     0,
+		addr:            addr,
 	}
 }
 
@@ -67,8 +80,10 @@ func New(addr string) *Server {
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", s.handleWebSocket)
+	mux.HandleFunc("/ws/admin", s.handleAdminWebSocket)
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/", s.handleRoot)
+	mux.HandleFunc("/admin", s.handleAdmin)
 
 	s.httpServer = &http.Server{
 		Addr:    s.addr,
@@ -79,6 +94,8 @@ func (s *Server) Start() error {
 
 	// Start hub routine
 	go s.run()
+	// Start admin broadcast routine
+	go s.adminBroadcastLoop()
 
 	return s.httpServer.ListenAndServe()
 }
@@ -111,6 +128,10 @@ func (s *Server) run() {
 		case client := <-s.register:
 			s.mu.Lock()
 			s.clients[client.id] = client
+			s.TotalClients++
+			if len(s.clients) > s.PeakClients {
+				s.PeakClients = len(s.clients)
+			}
 			s.mu.Unlock()
 			log.Printf("Client registered: %s (total: %d)", client.id, len(s.clients))
 
@@ -122,6 +143,24 @@ func (s *Server) run() {
 				log.Printf("Client unregistered: %s (total: %d)", client.id, len(s.clients))
 			}
 			s.mu.Unlock()
+
+		case conn := <-s.registerAdmin:
+			adminID := generateClientID()
+			s.adminMu.Lock()
+			s.adminClients[adminID] = conn
+			s.adminMu.Unlock()
+			log.Printf("Admin client registered: %s (total: %d)", adminID, len(s.adminClients))
+
+		case conn := <-s.unregisterAdmin:
+			s.adminMu.Lock()
+			for id, c := range s.adminClients {
+				if c == conn {
+					delete(s.adminClients, id)
+					log.Printf("Admin client unregistered: %s (total: %d)", id, len(s.adminClients))
+					break
+				}
+			}
+			s.adminMu.Unlock()
 		}
 	}
 }
@@ -136,13 +175,15 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	// Create new client
 	client := &Client{
-		id:       generateClientID(),
-		conn:     conn,
-		send:     make(chan []byte, 256),
-		server:   s,
-		game:     game.New(),
-		lastPong: time.Now(),
-		pingTimer: time.NewTimer(s.PingInterval),
+		id:           generateClientID(),
+		conn:         conn,
+		send:         make(chan []byte, 256),
+		server:       s,
+		game:         game.New(),
+		address:      r.RemoteAddr,
+		connectTime:  time.Now(),
+		lastPong:     time.Now(),
+		pingTimer:    time.NewTimer(s.PingInterval),
 		timeoutTimer: time.NewTimer(s.PongTimeout),
 	}
 
@@ -181,6 +222,43 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "test-client.html")
 }
 
+// handleAdmin handles admin page requests
+func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/admin" {
+		http.NotFound(w, r)
+		return
+	}
+
+	http.ServeFile(w, r, "admin-client.html")
+}
+
+// handleAdminWebSocket handles admin WebSocket connections
+func (s *Server) handleAdminWebSocket(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("Admin WebSocket upgrade error: %v", err)
+		return
+	}
+
+	// Register admin client
+	s.registerAdmin <- conn
+
+	// Read messages to keep connection alive
+	go func() {
+		defer func() {
+			s.unregisterAdmin <- conn
+			conn.Close()
+		}()
+
+		for {
+			_, _, err := conn.ReadMessage()
+			if err != nil {
+				break
+			}
+		}
+	}()
+}
+
 // readPump handles messages from the WebSocket connection
 func (c *Client) readPump() {
 	defer func() {
@@ -192,6 +270,8 @@ func (c *Client) readPump() {
 	c.conn.SetPongHandler(func(string) error {
 		c.conn.SetReadDeadline(time.Now().Add(c.server.PongTimeout))
 		c.lastPong = time.Now()
+		// Reset the timeout timer when pong is received
+		c.timeoutTimer.Reset(c.server.PongTimeout)
 		return nil
 	})
 
@@ -268,7 +348,7 @@ func (c *Client) handleMessage(data []byte) {
 		return
 	}
 
-	if c.game.IsGameOver() && msgType != protocol.MessageTypePong {
+	if c.game.IsGameOver() && msgType != protocol.MessageTypePong && msgType != protocol.MessageTypeRestart {
 		c.sendError("Game is over")
 		return
 	}
@@ -295,6 +375,10 @@ func (c *Client) handleMessage(data []byte) {
 	case protocol.MessageTypeResume:
 		log.Printf("[Client %s] Command: resume", c.id)
 		c.game.Resume()
+	case protocol.MessageTypeRestart:
+		log.Printf("[Client %s] Command: restart", c.id)
+		// Create a new game instance
+		c.game = game.New()
 	case protocol.MessageTypePong:
 		// Pong is handled by SetPongHandler
 		return
@@ -427,4 +511,75 @@ func (c *Client) heartbeat() {
 // generateClientID generates a unique client ID
 func generateClientID() string {
 	return "client_" + time.Now().Format("20060102_150405_000000000")
+}
+
+// adminBroadcastLoop broadcasts client status to admin clients every second
+func (s *Server) adminBroadcastLoop() {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		<-ticker.C
+		s.broadcastClientStatus()
+	}
+}
+
+// broadcastClientStatus broadcasts client status to all admin clients
+func (s *Server) broadcastClientStatus() {
+	// Collect client information
+	clientsInfo := s.getClientsInfo()
+
+	// Serialize to JSON
+	data, err := json.Marshal(clientsInfo)
+	if err != nil {
+		log.Printf("Error marshaling client info: %v", err)
+		return
+	}
+
+	// Send to all admin clients
+	s.adminMu.RLock()
+	for id, conn := range s.adminClients {
+		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+			log.Printf("Error sending to admin client %s: %v", id, err)
+			// Connection error, close and remove
+			conn.Close()
+			go func() {
+				s.unregisterAdmin <- conn
+			}()
+		}
+	}
+	s.adminMu.RUnlock()
+}
+
+// getClientsInfo returns information about all connected clients
+func (s *Server) getClientsInfo() map[string]interface{} {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Prepare client data
+	clients := make([]map[string]interface{}, 0, len(s.clients))
+	for _, client := range s.clients {
+		gameState := client.game.GetState().String()
+		score := client.game.GetScore()
+		level := client.game.GetLevel()
+		lines := client.game.GetLines()
+
+		clients = append(clients, map[string]interface{}{
+			"id":          client.id,
+			"address":     client.address,
+			"connectTime": client.connectTime,
+			"gameState":   gameState,
+			"score":       score,
+			"level":       level,
+			"lines":       lines,
+		})
+	}
+
+	return map[string]interface{}{
+		"currentClients": len(s.clients),
+		"totalClients":   s.TotalClients,
+		"peakClients":    s.PeakClients,
+		"clients":        clients,
+		"timestamp":      time.Now(),
+	}
 }

@@ -20,6 +20,7 @@ const (
 	MessageTypeHardDrop  MessageType = "hard_drop"
 	MessageTypePause     MessageType = "pause"
 	MessageTypeResume    MessageType = "resume"
+	MessageTypeRestart   MessageType = "restart"
 	MessageTypePong      MessageType = "pong"
 
 	// Server to Client messages
@@ -198,7 +199,7 @@ func DeserializeMessage(data []byte) (*Message, error) {
 func IsValidControlType(t MessageType) bool {
 	switch t {
 	case MessageTypeMoveLeft, MessageTypeMoveRight, MessageTypeMoveDown,
-		MessageTypeRotate, MessageTypeHardDrop, MessageTypePause, MessageTypeResume, MessageTypePong:
+		MessageTypeRotate, MessageTypeHardDrop, MessageTypePause, MessageTypeResume, MessageTypeRestart, MessageTypePong:
 		return true
 	default:
 		return false
