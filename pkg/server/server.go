@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -509,8 +510,14 @@ func (c *Client) heartbeat() {
 }
 
 // generateClientID generates a unique client ID
+var clientIDCounter int64
+var clientIDMutex sync.Mutex
+
 func generateClientID() string {
-	return "client_" + time.Now().Format("20060102_150405_000000000")
+	clientIDMutex.Lock()
+	defer clientIDMutex.Unlock()
+	clientIDCounter++
+	return "client_" + time.Now().Format("20060102_150405_000000000") + "_" + strconv.FormatInt(clientIDCounter, 10)
 }
 
 // adminBroadcastLoop broadcasts client status to admin clients every second
