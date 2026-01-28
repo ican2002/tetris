@@ -506,6 +506,9 @@ func (c *Client) heartbeat() {
 
 		case <-c.timeoutTimer.C:
 			log.Printf("Client %s timeout, disconnecting", c.id)
+			// Send proper close frame before closing connection
+			c.conn.WriteMessage(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.CloseNormalClosure, "timeout"))
 			c.conn.Close()
 			return
 		}
