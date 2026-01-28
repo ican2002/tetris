@@ -1,11 +1,13 @@
 package wsclient
 
 import (
+	"encoding/json"
 	"log"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/ican2002/tetris/pkg/protocol"
 )
 
 // Client represents a WebSocket client
@@ -69,6 +71,19 @@ func (c *Client) listen() {
 				c.onError(err)
 			}
 			break
+		}
+
+		// Check if this is a ping message that needs an automatic pong response
+		var msg protocol.Message
+		if err := json.Unmarshal(message, &msg); err == nil {
+			if msg.Type == protocol.MessageTypePing {
+				// Automatically respond to ping with pong
+				pongMsg := protocol.ControlMessage{Type: protocol.MessageTypePong}
+				pongData, _ := json.Marshal(pongMsg)
+				c.conn.WriteMessage(websocket.TextMessage, pongData)
+				// Don't forward ping messages to the application
+				continue
+			}
 		}
 
 		if c.onStateChange != nil {

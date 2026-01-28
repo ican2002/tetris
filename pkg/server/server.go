@@ -381,7 +381,10 @@ func (c *Client) handleMessage(data []byte) {
 		// Create a new game instance
 		c.game = game.New()
 	case protocol.MessageTypePong:
-		// Pong is handled by SetPongHandler
+		// Application-layer pong - reset timeout timer
+		// This is needed because we use application-layer ping/pong
+		// instead of WebSocket protocol ping/pong
+		c.timeoutTimer.Reset(c.server.PongTimeout)
 		return
 	}
 
