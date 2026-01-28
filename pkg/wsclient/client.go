@@ -73,23 +73,50 @@ func (c *Client) listen() {
 			break
 		}
 
-		// Check if this is a ping message that needs an automatic pong response
-		var msg protocol.Message
-		if err := json.Unmarshal(message, &msg); err == nil {
-			if msg.Type == protocol.MessageTypePing {
-				// Automatically respond to ping with pong
-				pongMsg := protocol.ControlMessage{Type: protocol.MessageTypePong}
-				pongData, _ := json.Marshal(pongMsg)
-				c.conn.WriteMessage(websocket.TextMessage, pongData)
-				// Don't forward ping messages to the application
-				continue
+		// Server may send multiple messages separated by newline
+		messages := splitMessages(message)
+		for _, msg := range messages {
+			// Check if this is a ping message that needs an automatic pong response
+			var protocolMsg protocol.Message
+			if err := json.Unmarshal(msg, &protocolMsg); err == nil {
+				if protocolMsg.Type == protocol.MessageTypePing {
+					// Automatically respond to ping with pong
+					pongMsg := protocol.ControlMessage{Type: protocol.MessageTypePong}
+					pongData, _ := json.Marshal(pongMsg)
+					c.conn.WriteMessage(websocket.TextMessage, pongData)
+					// Don't forward ping messages to the application
+					continue
+				}
+			}
+
+			if c.onStateChange != nil {
+				c.onStateChange(msg)
 			}
 		}
+	}
+}
 
-		if c.onStateChange != nil {
-			c.onStateChange(message)
+// splitMessages splits a message byte slice by newline characters
+func splitMessages(data []byte) [][]byte {
+	return splitFunc(data, '\n')
+}
+
+// splitFunc splits a byte slice by a delimiter character
+func splitFunc(data []byte, delimiter byte) [][]byte {
+	var result [][]byte
+	start := 0
+	for i, b := range data {
+		if b == delimiter {
+			if start < i {
+				result = append(result, data[start:i])
+			}
+			start = i + 1
 		}
 	}
+	if start < len(data) {
+		result = append(result, data[start:])
+	}
+	return result
 }
 
 // handleDisconnect handles connection disconnection
