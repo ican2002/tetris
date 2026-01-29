@@ -20,6 +20,9 @@ type Client struct {
 	maxRetries int
 	retryDelay time.Duration
 
+	// Write channel for thread-safe writes
+	send chan []byte
+
 	// Callbacks
 	onStateChange  func([]byte)
 	onConnected    func()
@@ -31,6 +34,7 @@ type Client struct {
 func New(url string) *Client {
 	return &Client{
 		url:        url,
+		send:       make(chan []byte, 256),
 		reconnect:  true,
 		maxRetries: 5,
 		retryDelay: 3 * time.Second,
@@ -54,22 +58,46 @@ func (c *Client) Connect() error {
 		c.onConnected()
 	}
 
+	// Start write pump
+	go c.writePump()
+
 	// Start listening for messages
 	go c.listen()
 
 	return nil
 }
 
-// listen receives messages from the WebSocket server
-func (c *Client) listen() {
+// writePump handles writing messages to the WebSocket connection
+func (c *Client) writePump() {
 	defer c.handleDisconnect()
 
+	for {
+		select {
+		case message, ok := <-c.send:
+			if !ok {
+				// Channel closed
+				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				return
+			}
+
+			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
+				return
+			}
+		}
+	}
+}
+
+// listen receives messages from the WebSocket server
+func (c *Client) listen() {
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
 			if c.onError != nil {
 				c.onError(err)
 			}
+			// Close the send channel to signal writePump to stop
+			close(c.send)
 			break
 		}
 
@@ -83,7 +111,12 @@ func (c *Client) listen() {
 					// Automatically respond to ping with pong
 					pongMsg := protocol.ControlMessage{Type: protocol.MessageTypePong}
 					pongData, _ := json.Marshal(pongMsg)
-					c.conn.WriteMessage(websocket.TextMessage, pongData)
+					// Send through channel for thread-safe write
+					select {
+					case c.send <- pongData:
+					default:
+						// Channel full, skip this pong
+					}
 					// Don't forward ping messages to the application
 					continue
 				}
@@ -122,8 +155,10 @@ func splitFunc(data []byte, delimiter byte) [][]byte {
 // handleDisconnect handles connection disconnection
 func (c *Client) handleDisconnect() {
 	c.mu.Lock()
-	c.connected = false
-	c.conn.Close()
+	if c.connected {
+		c.connected = false
+		c.conn.Close()
+	}
 	c.mu.Unlock()
 
 	if c.onDisconnected != nil {
@@ -131,7 +166,11 @@ func (c *Client) handleDisconnect() {
 	}
 
 	// Auto-reconnect if enabled
-	if c.reconnect {
+	c.mu.RLock()
+	reconnect := c.reconnect
+	c.mu.RUnlock()
+
+	if reconnect {
 		c.reconnectLoop()
 	}
 }
@@ -160,7 +199,13 @@ func (c *Client) Send(data []byte) error {
 		return ErrNotConnected
 	}
 
-	return c.conn.WriteMessage(websocket.TextMessage, data)
+	select {
+	case c.send <- data:
+		return nil
+	default:
+		// Channel full
+		return ErrNotConnected
+	}
 }
 
 // Close closes the WebSocket connection
@@ -170,6 +215,9 @@ func (c *Client) Close() error {
 
 	c.reconnect = false // Disable reconnect on manual close
 	c.connected = false
+
+	// Close the send channel to signal writePump to stop
+	close(c.send)
 
 	if c.conn != nil {
 		return c.conn.Close()
