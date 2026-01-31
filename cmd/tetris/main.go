@@ -103,8 +103,11 @@ func main() {
 		logBuffer.Add("✓ Connected to server")
 	})
 	client.SetOnDisconnected(func() {
-		statusMsg = "Disconnected from server"
+		statusMsg = "Disconnected from server - Press any key to reconnect"
 		logBuffer.Add("✗ Disconnected from server")
+		// Clear game state to return to welcome screen
+		currentState = nil
+		gameOver = false
 	})
 	client.SetOnError(func(err error) {
 		statusMsg = fmt.Sprintf("Error: %v", err)
@@ -191,7 +194,22 @@ func main() {
 				}
 
 				if gameOver {
-					// Game over state - already handled above
+					// Game over state - check for restart key
+					if ev.Key() == tcell.KeyRune && (ev.Rune() == 'r' || ev.Rune() == 'R') {
+						// Send restart command
+						cmd := protocol.ControlMessage{Type: protocol.MessageTypeRestart}
+						data, err := json.Marshal(cmd)
+						if err != nil {
+							logBuffer.Add(fmt.Sprintf("✗ Failed to marshal restart: %v", err))
+						} else if err := client.Send(data); err != nil {
+							logBuffer.Add(fmt.Sprintf("✗ Failed to send restart: %v", err))
+						} else {
+							logBuffer.Add("→ restart")
+							statusMsg = "Restarting..."
+							// Clear game over state
+							gameOver = false
+						}
+					}
 					continue
 				}
 

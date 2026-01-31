@@ -31,11 +31,6 @@ type Client struct {
 	game        *game.Game
 	address     string
 	connectTime time.Time
-
-	// Heartbeat
-	lastPong     time.Time
-	pingTimer    *time.Timer
-	timeoutTimer *time.Timer
 }
 
 // Server represents the WebSocket server
@@ -176,16 +171,13 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	// Create new client
 	client := &Client{
-		id:           generateClientID(),
-		conn:         conn,
-		send:         make(chan []byte, 256),
-		server:       s,
-		game:         game.New(),
-		address:      r.RemoteAddr,
-		connectTime:  time.Now(),
-		lastPong:     time.Now(),
-		pingTimer:    time.NewTimer(s.PingInterval),
-		timeoutTimer: time.NewTimer(s.PongTimeout),
+		id:          generateClientID(),
+		conn:        conn,
+		send:        make(chan []byte, 256),
+		server:      s,
+		game:        game.New(),
+		address:     r.RemoteAddr,
+		connectTime: time.Now(),
 	}
 
 	// Register client
@@ -194,7 +186,6 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Start client routines
 	go client.writePump()
 	go client.readPump()
-	go client.heartbeat()
 
 	// Send initial game state
 	client.sendState()
@@ -270,9 +261,6 @@ func (c *Client) readPump() {
 	c.conn.SetReadDeadline(time.Now().Add(c.server.PongTimeout))
 	c.conn.SetPongHandler(func(string) error {
 		c.conn.SetReadDeadline(time.Now().Add(c.server.PongTimeout))
-		c.lastPong = time.Now()
-		// Reset the timeout timer when pong is received
-		c.timeoutTimer.Reset(c.server.PongTimeout)
 		return nil
 	})
 
@@ -293,9 +281,11 @@ func (c *Client) readPump() {
 func (c *Client) writePump() {
 	// Update game state periodically for smooth gameplay
 	// Use a longer interval to avoid race conditions with user input
-	ticker := time.NewTicker(200 * time.Millisecond)
+	gameTicker := time.NewTicker(200 * time.Millisecond)
+	pingTicker := time.NewTicker(c.server.PingInterval)
 	defer func() {
-		ticker.Stop()
+		gameTicker.Stop()
+		pingTicker.Stop()
 		c.conn.Close()
 	}()
 
@@ -325,13 +315,16 @@ func (c *Client) writePump() {
 				return
 			}
 
-		case <-ticker.C:
+		case <-gameTicker.C:
 			// Update game and send state
 			c.updateGame()
 
-		case <-c.pingTimer.C:
-			// Send ping
-			c.sendPing()
+		case <-pingTicker.C:
+			// Send WebSocket protocol ping
+			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
 		}
 	}
 }
@@ -381,10 +374,8 @@ func (c *Client) handleMessage(data []byte) {
 		// Create a new game instance
 		c.game = game.New()
 	case protocol.MessageTypePong:
-		// Application-layer pong - reset timeout timer
-		// This is needed because we use application-layer ping/pong
-		// instead of WebSocket protocol ping/pong
-		c.timeoutTimer.Reset(c.server.PongTimeout)
+		// WebSocket protocol-level pong is handled by SetPongHandler in readPump
+		// No need to handle application-level pong anymore
 		return
 	}
 
@@ -493,25 +484,6 @@ func (c *Client) sendGameOver() {
 	case c.send <- data:
 	default:
 		// Channel full or closed, skip this message
-	}
-}
-
-// heartbeat manages ping/pong heartbeat
-func (c *Client) heartbeat() {
-	for {
-		select {
-		case <-c.pingTimer.C:
-			c.sendPing()
-			c.pingTimer.Reset(c.server.PingInterval)
-
-		case <-c.timeoutTimer.C:
-			log.Printf("Client %s timeout, disconnecting", c.id)
-			// Send proper close frame before closing connection
-			c.conn.WriteMessage(websocket.CloseMessage,
-				websocket.FormatCloseMessage(websocket.CloseNormalClosure, "timeout"))
-			c.conn.Close()
-			return
-		}
 	}
 }
 

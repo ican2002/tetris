@@ -22,6 +22,7 @@ type Client struct {
 
 	// Write channel for thread-safe writes
 	send chan []byte
+	sendMu sync.Mutex // Protects send channel close
 
 	// Callbacks
 	onStateChange  func([]byte)
@@ -53,6 +54,9 @@ func (c *Client) Connect() error {
 
 	c.conn = conn
 	c.connected = true
+
+	// Create a new send channel for each connection
+	c.send = make(chan []byte, 256)
 
 	if c.onConnected != nil {
 		c.onConnected()
@@ -97,7 +101,17 @@ func (c *Client) listen() {
 				c.onError(err)
 			}
 			// Close the send channel to signal writePump to stop
-			close(c.send)
+			// Use mutex to prevent duplicate close
+			c.sendMu.Lock()
+			select {
+			case _, ok := <-c.send:
+				if ok {
+					close(c.send)
+				}
+			default:
+				// Channel already closed or doesn't exist
+			}
+			c.sendMu.Unlock()
 			break
 		}
 
@@ -165,13 +179,13 @@ func (c *Client) handleDisconnect() {
 		c.onDisconnected()
 	}
 
-	// Auto-reconnect if enabled
+	// Auto-reconnect if enabled - run in goroutine to avoid blocking
 	c.mu.RLock()
 	reconnect := c.reconnect
 	c.mu.RUnlock()
 
 	if reconnect {
-		c.reconnectLoop()
+		go c.reconnectLoop()
 	}
 }
 
@@ -217,7 +231,17 @@ func (c *Client) Close() error {
 	c.connected = false
 
 	// Close the send channel to signal writePump to stop
-	close(c.send)
+	// Use mutex to prevent duplicate close
+	c.sendMu.Lock()
+	select {
+	case _, ok := <-c.send:
+		if ok {
+			close(c.send)
+		}
+	default:
+		// Channel already closed
+	}
+	c.sendMu.Unlock()
 
 	if c.conn != nil {
 		return c.conn.Close()

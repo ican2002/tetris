@@ -242,6 +242,7 @@ func (t *TUI) DrawGameOverScreen(state *protocol.StateMessage, style tcell.Style
 		fmt.Sprintf("Level: %d", state.Level),
 		fmt.Sprintf("Lines: %d", state.Lines),
 		"",
+		"Press R to restart",
 		"Press Q or ESC to quit...",
 	}
 
