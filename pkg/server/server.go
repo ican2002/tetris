@@ -363,6 +363,9 @@ func (c *Client) handleMessage(data []byte) {
 	case protocol.MessageTypeHardDrop:
 		log.Printf("[Client %s] Command: hard_drop", c.id)
 		c.game.HardDrop()
+	case protocol.MessageTypeTogglePause:
+		log.Printf("[Client %s] Command: toggle_pause", c.id)
+		c.game.TogglePause()
 	case protocol.MessageTypePause:
 		log.Printf("[Client %s] Command: pause", c.id)
 		c.game.Pause()

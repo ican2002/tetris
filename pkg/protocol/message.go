@@ -13,15 +13,16 @@ type MessageType string
 
 const (
 	// Client to Server messages
-	MessageTypeMoveLeft  MessageType = "move_left"
-	MessageTypeMoveRight MessageType = "move_right"
-	MessageTypeMoveDown  MessageType = "move_down"
-	MessageTypeRotate    MessageType = "rotate"
-	MessageTypeHardDrop  MessageType = "hard_drop"
-	MessageTypePause     MessageType = "pause"
-	MessageTypeResume    MessageType = "resume"
-	MessageTypeRestart   MessageType = "restart"
-	MessageTypePong      MessageType = "pong"
+	MessageTypeMoveLeft    MessageType = "move_left"
+	MessageTypeMoveRight   MessageType = "move_right"
+	MessageTypeMoveDown    MessageType = "move_down"
+	MessageTypeRotate      MessageType = "rotate"
+	MessageTypeHardDrop    MessageType = "hard_drop"
+	MessageTypeTogglePause MessageType = "toggle_pause"
+	MessageTypePause       MessageType = "pause"
+	MessageTypeResume      MessageType = "resume"
+	MessageTypeRestart     MessageType = "restart"
+	MessageTypePong        MessageType = "pong"
 
 	// Server to Client messages
 	MessageTypeState    MessageType = "state"
@@ -199,7 +200,7 @@ func DeserializeMessage(data []byte) (*Message, error) {
 func IsValidControlType(t MessageType) bool {
 	switch t {
 	case MessageTypeMoveLeft, MessageTypeMoveRight, MessageTypeMoveDown,
-		MessageTypeRotate, MessageTypeHardDrop, MessageTypePause, MessageTypeResume, MessageTypeRestart, MessageTypePong:
+		MessageTypeRotate, MessageTypeHardDrop, MessageTypeTogglePause, MessageTypePause, MessageTypeResume, MessageTypeRestart, MessageTypePong:
 		return true
 	default:
 		return false

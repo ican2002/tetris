@@ -391,9 +391,7 @@ func handleKeyEvent(ev *tcell.EventKey, client *wsclient.Client, logBuffer *LogB
 		case ' ', 'x', 'X':
 			cmdType = protocol.MessageTypeHardDrop
 		case 'p', 'P':
-			cmdType = protocol.MessageTypePause
-		case 'r', 'R':
-			cmdType = protocol.MessageTypeResume
+			cmdType = protocol.MessageTypeTogglePause
 		default:
 			return false
 		}
